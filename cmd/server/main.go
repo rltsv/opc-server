@@ -12,11 +12,6 @@ import (
 	"os"
 )
 
-type Person struct {
-	Name string
-	Age  int
-}
-
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,

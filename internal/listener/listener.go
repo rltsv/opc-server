@@ -82,17 +82,24 @@ func Listen(ms *structs.KNXListener, Conn *websocket.Conn) {
 		}
 
 		//Compose the actual data to be pushed out
-		fields := map[string]interface{}{"value": value}
-		tags := map[string]string{
+		//fields := map[string]interface{}{"value": value}
+		//tags := map[string]string{
+		//	"groupAddress": ga,
+		//	"unit":         target.Datapoint.(dpt.DatapointMeta).Unit(),
+		//	"source":       msg.Source.String(),
+		//}
 
-			"groupAddress": ga,
-			"unit":         target.Datapoint.(dpt.DatapointMeta).Unit(),
-			"source":       msg.Source.String(),
+		OutputStruct := structs.ListenOutput{
+			TargetMeas:   target.Measurement,
+			Fields:       value,
+			GroupAddress: ga,
+			Unit:         target.Datapoint.(dpt.DatapointMeta).Unit(),
+			Source:       msg.Source.String(),
 		}
 
-		fmt.Println(target.Measurement, fields, tags)
+		//fmt.Println(target.Measurement, fields, tags)
 
-		myJson, err := json.Marshal(tags)
+		myJson, err := json.Marshal(OutputStruct)
 		if err != nil {
 			fmt.Println(err)
 			return
