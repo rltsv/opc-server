@@ -3,101 +3,70 @@ package listener
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
+	"github.com/opc-server/internal/structs"
 	"github.com/vapourismo/knx-go/knx"
 	"github.com/vapourismo/knx-go/knx/dpt"
-	"log"
-	"os"
 	"reflect"
-	"sync"
 )
 
-type KNXInterface interface {
-	Inbound() <-chan knx.GroupEvent
-	Close()
-}
+func Start(ms *structs.KNXListener) error {
 
-type addressTarget struct {
-	measurement string
-	datapoint   dpt.DatapointValue
-}
-
-type Measurement struct {
-	Name      string   `json:"name"`
-	Dpt       string   `json:"dpt"`
-	Addresses []string `json:"addresses"`
-}
-
-type KNXListener struct {
-	ServiceType    string        `json:"service_type"`
-	ServiceAddress string        `json:"service_address"`
-	Measurements   []Measurement `json:"measurement"`
-
-	gaLogbook   map[string]bool
-	gaTargetMap map[string]addressTarget
-	client      KNXInterface
-
-	msg interface{}
-
-	wg sync.WaitGroup
-}
-
-func Start(ms *KNXListener) error {
-
-	ms.gaTargetMap = make(map[string]addressTarget)
+	ms.GaTargetMap = make(map[string]structs.AddressTarget)
 
 	for _, m := range ms.Measurements {
 
 		for _, ga := range m.Addresses {
 
-			if _, ok := ms.gaTargetMap[ga]; ok {
+			if _, ok := ms.GaTargetMap[ga]; ok {
 				return fmt.Errorf("duplicate specification of address %q", ga)
 			}
 			d, ok := dpt.Produce(m.Dpt)
 			if !ok {
 				return fmt.Errorf("cannot create datapoint-type %q for address %q", m.Dpt, ga)
 			}
-			ms.gaTargetMap[ga] = addressTarget{m.Name, d}
+			ms.GaTargetMap[ga] = structs.AddressTarget{m.Name, d}
 		}
 	}
 	return nil
 }
 
-func Connect(ms *KNXListener) error {
+func Connect(ms *structs.KNXListener) error {
 	c, err := knx.NewGroupTunnel(ms.ServiceAddress, knx.DefaultTunnelConfig)
 	if err != nil {
 		return err
 	}
-	ms.client = &c
+	ms.Client = &c
 	return nil
 }
 
-func Listen(ms *KNXListener) {
-	ms.gaLogbook = make(map[string]bool)
+func Listen(ms *structs.KNXListener, Conn *websocket.Conn) {
+	ms.GaLogbook = make(map[string]bool)
 
-	for msg := range ms.client.Inbound() {
+	for msg := range ms.Client.Inbound() {
 		// Match GA to DataPointType and measurement name
 		ga := msg.Destination.String()
-		target, ok := ms.gaTargetMap[ga]
+		target, ok := ms.GaTargetMap[ga]
 		if !ok {
-			if !ms.gaLogbook[ga] {
+			if !ms.GaLogbook[ga] {
 
-				ms.gaLogbook[ga] = true
+				ms.GaLogbook[ga] = true
 			}
 			continue
 		}
 		//ИЗВЛЕКАЕМ ЗНАЧЕНИЯ ИЗ ПАКЕТА
-		err := target.datapoint.Unpack(msg.Data)
+		err := target.Datapoint.Unpack(msg.Data)
 		if err != nil {
 			//fmt.Printf("Unpacking data failed: %v\n", err)
 			continue
 		}
 		//fmt.Printf("Matched GA %q to measurement %q with value %v\n", ga, target.measurement, target.datapoint)
 
-		// Convert the DatapointValue interface back to its basic type again
-		// as otherwise telegraf will not push out the metrics and eat it
-		// silently.
+		//Convert the DatapointValue interface back to its basic type again
+		//as otherwise telegraf will not push out the metrics and eat it
+		//silently.
 		var value interface{}
-		vi := reflect.Indirect(reflect.ValueOf(target.datapoint))
+		vi := reflect.Indirect(reflect.ValueOf(target.Datapoint))
 		switch vi.Kind() {
 		case reflect.Bool:
 			value = vi.Bool()
@@ -112,50 +81,28 @@ func Listen(ms *KNXListener) {
 			continue
 		}
 
-		// Compose the actual data to be pushed out
+		//Compose the actual data to be pushed out
 		fields := map[string]interface{}{"value": value}
 		tags := map[string]string{
+
 			"groupAddress": ga,
-			"unit":         target.datapoint.(dpt.DatapointMeta).Unit(),
+			"unit":         target.Datapoint.(dpt.DatapointMeta).Unit(),
 			"source":       msg.Source.String(),
 		}
-		fmt.Println(target.measurement, fields, tags)
+
+		fmt.Println(target.Measurement, fields, tags)
+
+		myJson, err := json.Marshal(tags)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		err = Conn.WriteMessage(websocket.TextMessage, myJson)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
 	}
-}
-
-// ЗАПУСК ПРОГРАММЫ
-func main() {
-
-	var mainStruct KNXListener
-	//ЧИТАЕМ JSON ИЗ ФАЙЛА
-	file, err := os.ReadFile("initial_data.json")
-	if err != nil {
-		log.Fatal("Что-то пошло не так")
-	}
-
-	err = json.Unmarshal(file, &mainStruct)
-	if err != nil {
-		log.Fatal("Анмаршал не прошел")
-	}
-	// СОСТАВЛЯЕМ МАПУ
-	err = Start(&mainStruct)
-	if err != nil {
-		log.Fatal("Ошибка при составлении мапы")
-	}
-	fmt.Print(mainStruct.ServiceType, "\n", mainStruct.ServiceAddress, "\n", mainStruct.gaTargetMap, "\n")
-
-	//ПОДКЛЮЧАЕМСЯ К ШЛЮЗУ
-	err = Connect(&mainStruct)
-	if err != nil {
-		fmt.Print("Подключения нет! ", err)
-	}
-	fmt.Print("Связь установлена!\n")
-
-	//НАЧИНАЕМ ЧИТАТЬ
-	mainStruct.wg.Add(1)
-	go func() {
-		Listen(&mainStruct)
-	}()
-	mainStruct.wg.Wait()
-
 }

@@ -1,4 +1,4 @@
-module github.com/OPCServer_Project1
+module github.com/opc-server
 
 go 1.19
 
