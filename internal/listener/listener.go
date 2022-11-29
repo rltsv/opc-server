@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -105,11 +106,15 @@ func Listen(ms *structs.KNXListener, Conn *websocket.Conn) {
 			return
 		}
 
-		err = Conn.WriteMessage(websocket.TextMessage, myJson)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		var oldJson []byte
 
+		if !bytes.Equal(oldJson, myJson) {
+			err = Conn.WriteMessage(websocket.TextMessage, myJson)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+		oldJson = myJson
 	}
 }
